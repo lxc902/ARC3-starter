@@ -1,5 +1,5 @@
 # ARC-AGI Challenge 3 – StochasticGoose
-StochasticGoose is an action-learning agent for the ARC-AGI-3 Agent Preview Competition. It uses a simple reinforcement learning approach to predict which actions will cause frame changes, enabling more efficient exploration than random selection.
+StochasticGoose is an action-learning agent for the ARC-AGI-3 Agent Preview Competition, developed at [Tufa Labs](https://tufalabs.ai/). It uses a simple reinforcement learning approach to predict which actions will cause frame changes, enabling more efficient exploration than random selection.
 
 ## Authors
 
