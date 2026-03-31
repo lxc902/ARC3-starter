@@ -2,4 +2,6 @@ __pycache__/
 logs.log
 recordings/
 logs
-runs
+runs/
+.venv/
+*.pyc

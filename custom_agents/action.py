@@ -1,5 +1,6 @@
 import random
 import time
+import json
 from typing import Any
 import numpy as np
 import sys
@@ -15,7 +16,7 @@ import hashlib
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'ARC-AGI-3-Agents'))
 from agents.agent import Agent
-from agents.structs import FrameData, GameAction, GameState
+from arcengine import FrameData, GameAction, GameState
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(os.path.dirname(__file__))  # Add current directory to path
 from utils import setup_experiment_directory, setup_logging_for_experiment, get_environment_directory
@@ -163,7 +164,14 @@ class Action(Agent):
         # Store log directory for saving images
         self.log_dir = env_dir
         
+        # Live viewer data directory
+        self.viewer_dir = os.path.join(env_dir, 'viewer_data')
+        os.makedirs(os.path.join(self.viewer_dir, 'heatmaps'), exist_ok=True)
+        self.viewer_log_path = os.path.join(self.viewer_dir, 'steps.jsonl')
+        self.viewer_log_file = open(self.viewer_log_path, 'a')
+        
         print(f"Action agent logging to: {tensorboard_dir}")
+        print(f"Viewer data directory: {self.viewer_dir}")
         self.logger.info(f"Action agent initialized for game_id: {self.game_id}")
         if self.save_action_visualizations:
             self.logger.info(f"Action visualizations enabled: saving {self.vis_samples_per_save} samples every {self.vis_save_frequency} steps")
@@ -181,8 +189,7 @@ class Action(Agent):
             action6_available = False
             
             for action in available_actions:
-                # Extract action value if it's a GameAction enum
-                action_id = action.value
+                action_id = action.value if hasattr(action, 'value') else int(action)
                 
                 if 1 <= action_id <= 5:  # ACTION1-ACTION5
                     action_mask[action_id - 1] = 0.0  # Unmask valid actions
@@ -331,11 +338,11 @@ class Action(Agent):
 
         """Choose action using action model predictions."""
         # Check if score has changed and log score at action count
-        if latest_frame.score != self.current_score:
+        if latest_frame.levels_completed != self.current_score:
             if self.save_action_visualizations:
-                self.writer.add_scalar('Agent/score', latest_frame.score, self.action_counter)
-            self.logger.info(f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}")
-            print(f"Score changed from {self.current_score} to {latest_frame.score} at action {self.action_counter}")
+                self.writer.add_scalar('Agent/score', latest_frame.levels_completed, self.action_counter)
+            self.logger.info(f"Score changed from {self.current_score} to {latest_frame.levels_completed} at action {self.action_counter}")
+            print(f"Score changed from {self.current_score} to {latest_frame.levels_completed} at action {self.action_counter}")
             
             # Clear experience buffer when reaching new level
             self.experience_buffer.clear()
@@ -358,7 +365,7 @@ class Action(Agent):
             self.prev_action_idx = None
             
             
-            self.current_score = latest_frame.score
+            self.current_score = latest_frame.levels_completed
         
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             # Reset previous tracking on game reset
@@ -481,9 +488,24 @@ class Action(Agent):
                 # Selected coordinate action - log coordinate probability
                 self.writer.add_scalar('Agent/selected_coord_prob', coord_probs_only[coord_idx], self.action_counter)
                 self.writer.add_scalar('Agent/coord_entropy', -(coord_probs_only * np.log(coord_probs_only + 1e-8)).sum(), self.action_counter)
-                # self.writer.add_scalar('Agent/max_coord_prob', coord_probs_only.max(), self.action_counter)
-            
-            # self.writer.add_scalar('Agent/max_action_prob', action_probs_only.max(), self.action_counter)
-            # self.writer.add_scalar('Agent/coord_sum_prob', coord_probs_only.sum(), self.action_counter)
+        
+        # Save lightweight data for live viewer (always, minimal overhead)
+        frame_grid = np.array(latest_frame.frame)
+        if len(frame_grid.shape) == 3:
+            frame_grid = frame_grid[-1]
+        step_data = {
+            "step": self.action_counter,
+            "action_idx": int(action_idx),
+            "coord_x": int(coords[1]) if coords else -1,
+            "coord_y": int(coords[0]) if coords else -1,
+            "action_probs": all_probs[:5].tolist(),
+            "levels_completed": int(latest_frame.levels_completed),
+            "buffer_size": len(self.experience_buffer),
+            "frame": frame_grid.tolist(),
+        }
+        self.viewer_log_file.write(json.dumps(step_data) + '\n')
+        self.viewer_log_file.flush()
+        heatmap = all_probs[5:].reshape(self.grid_size, self.grid_size).astype(np.float16)
+        np.save(os.path.join(self.viewer_dir, 'heatmaps', f'{self.action_counter:06d}.npy'), heatmap)
         
         return selected_action

@@ -1,128 +1,109 @@
-# ARC-AGI Challenge 3 – StochasticGoose
-StochasticGoose is an action-learning agent for the ARC-AGI-3 Agent Preview Competition, developed at [Tufa Labs](https://tufalabs.ai/). It uses a simple reinforcement learning approach to predict which actions will cause frame changes, enabling more efficient exploration than random selection.
+# ARC-AGI-3 Starter — 基于 StochasticGoose 的竞赛起步方案
 
-## Authors
+> 本仓库 fork 自 [DriesSmit/ARC3-solution](https://github.com/DriesSmit/ARC3-solution)（ARC-AGI-3 Agent Preview 竞赛第一名，得分 12.58%），已适配最新 v0.9.3 框架，可直接用于 [ARC Prize 2026](https://arcprize.org/competitions/2026) 竞赛开发。
 
-- **Lead Developer**: [Dries Smit](https://driessmit.github.io/) 
+## 核心思想
+
+StochasticGoose **不尝试理解谜题规则，而是学习"哪些操作能引起画面变化"**，从而比随机探索更高效。
+
+- **CNN 双头模型**：共享卷积骨干 → 动作头（预测 ACTION1-5 是否有效）+ 坐标头（预测 64×64 点击位置，纯卷积保留 2D 空间偏置）
+- **分层采样**：先决定动作类型，再决定坐标；用 sigmoid 独立预测 + 公平缩放归一化
+- **经验去重**：MD5 哈希确保 20 万样本缓冲中无重复，最大化样本多样性
+- **关卡重置**：进入新关卡时清空缓冲并重建模型，避免旧知识干扰
+- **可用动作掩码**：自动适配不同游戏的合法动作集（导航类 vs 点击类）
+
+## 相比原仓库的改动
+
+- 适配 ARC-AGI-3-Agents **v0.9.3**（`arcengine` 导入、`levels_completed` 字段）
+- `make install` 自动补丁 submodule，无需手动修改框架代码
+- 新增 `viewer.py` 实时可视化（游戏网格 + 动作概率 + 点击热力图 + 回看跳转）
+- 修复非 git 仓库环境下的报错
+
+## 快速开始
+
+### 前置条件
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) 包管理器
+- [ARC API Key](https://three.arcprize.org/user)
+
+### 安装与运行
+
+```bash
+git clone --recurse-submodules https://github.com/lxc902/ARC3-starter.git
+cd ARC3-starter
+make install
+make setup-env
+# 编辑 ARC-AGI-3-Agents/.env，填入你的 ARC_API_KEY
+make action
+```
+
+### 指定游戏运行
+
+```bash
+uv run ARC-AGI-3-Agents/main.py --agent=action --game=vc33   # 点击操控类
+uv run ARC-AGI-3-Agents/main.py --agent=action --game=ls20   # 地图导航类
+uv run ARC-AGI-3-Agents/main.py --agent=action --game=ft09   # 逻辑匹配类
+```
+
+### 实时可视化
+
+在另一个终端运行：
+
+```bash
+make viewer
+```
+
+操作：左右方向键逐帧、空格切换 LIVE/REVIEW 模式、拖动滑块回看。
+
+## 原作者
+
+- **Lead Developer**: [Dries Smit](https://driessmit.github.io/) @ [Tufa Labs](https://tufalabs.ai/)
 - **Adviser/Reviewer**: [Jack Cole](https://x.com/MindsAI_Jack)
 
-## Overview
-The action learning agent uses a CNN-based model to predict which actions (ACTION1-ACTION6) will result in new frame states. This enables more precise exploration by biasing action selection toward actions predicted to cause changes.
+## 架构
 
-**Key Features:**
-- CNN with shared backbone for action and coordinate prediction
-- Binary classification: predicts if actions will change the current frame
-- Hierarchical sampling: first select action type, then coordinate if needed. The coordinate sampling is done purely through convolution to retain the 2D grid bias.
-- Efficient experience buffer that stores all experiences with hash-based deduplication for maximum sample efficiency given the ~200k sample constraint
-- Dynamic model reset when reaching new levels
+### ActionModel（CNN）
+- **输入**：16 通道 one-hot 编码帧（64×64）
+- **骨干网络**：4 层 CNN（32→64→128→256 通道）
+- **动作头**：预测 ACTION1-ACTION5 各自引起画面变化的概率
+- **坐标头**：预测 64×64 点击位置概率（纯卷积，保留 2D 空间归纳偏置）
 
-## Setup Instructions
+### 训练
+- **监督学习**：(state, action) → frame_changed 二分类（BCE Loss）
+- **经验缓冲**：20 万去重样本，MD5 哈希去重
+- **动态重置**：进入新关卡时清空缓冲、重建模型
+- **熵正则化**：轻量熵奖励防止过早收敛
 
-### Prerequisites
-- Python 3.10+
-- CUDA-capable GPU (recommended)
-- [uv](https://docs.astral.sh/uv/) package manager
+### 探索策略
+- **Sigmoid 独立预测**：每个动作独立预测"是否有效"
+- **公平采样**：坐标概率除以 4096，使 Click 与按键动作公平竞争
+- **可用动作掩码**：根据游戏返回的 `available_actions` 自动屏蔽非法动作
 
-### Step 1: Clone Repository
-```bash
-git clone --recurse-submodules git@github.com:DriesSmit/ARC3-solution.git
-cd ARC3-solution
-```
+## Makefile 命令
 
-### Step 2: Create Environment File
-Copy the example environment file and set your API key (get your API key from [https://three.arcprize.org/user](https://three.arcprize.org/user)):
-```bash
-cd ARC-AGI-3-Agents
-cp .env-example .env
-# Then edit .env file and replace the empty ARC_API_KEY= with your actual API key
-cd ..
-```
+| 命令 | 说明 |
+|------|------|
+| `make install` | 安装依赖 + 自动补丁 submodule |
+| `make action` | 运行 agent（全部游戏） |
+| `make setup-env` | 创建 .env 配置文件 |
+| `make viewer` | 启动实时可视化 |
+| `make tensorboard` | 启动 TensorBoard（http://localhost:6006）|
+| `make clean` | 清理运行产物 |
 
-### Step 3: Install Dependencies
-```bash
-make install
-```
-
-### Step 4: Configure Submodule
-Add the following code to `ARC-AGI-3-Agents/agents/__init__.py` (under the imports and before `load_dotenv()`):
-
-```python
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from custom_agent import *
-```
-
-Also, add the following field to the `FrameData` class in `ARC-AGI-3-Agents/agents/structs.py` (after the `full_reset` field):
-
-```python
-available_actions: list[GameAction] = Field(default_factory=list)
-```
-
-### Step 5: Run the Action Agent
-```bash
-make action
-```
-
-## Architecture
-
-### ActionModel (CNN)
-- **Input**: 16-channel one-hot encoded frames (64x64)
-- **Backbone**: 4-layer CNN (32→64→128→256 channels)
-- **Action Head**: Predicts ACTION1-ACTION5 probabilities
-- **Coordinate Head**: Predicts 64x64 click position probabilities for ACTION6 with 2D inductive bias using convolutional layers instead of flattened representations
-
-### Training
-- **Supervised Learning**: (state, action) → frame_changed labels
-- **Experience Buffer**: 200K unique state-action pairs with hash-based deduplication
-- **Dynamic Reset**: Clears buffer and resets model when reaching new levels
-- **Loss**: Binary cross-entropy with light entropy regularization
-
-### Exploration Strategy
-- **Stochastic Sampling**: Uses sigmoid probabilities for action selection
-- **Hierarchical Selection**: First sample action type, then coordinates if ACTION6
-- **Change Prediction**: Biases exploration toward actions predicted to cause changes
-
-## Monitoring
-
-The agent generates comprehensive logs and TensorBoard metrics:
-
-```bash
-# View training metrics
-make tensorboard
-# Open http://localhost:6006 in browser
-```
-
-
-## Files Structure
+## 文件结构
 
 ```
-ARC3/
-├── ARC-AGI-3-Agents/      # Competition framework (submodule)
+ARC3-starter/
+├── ARC-AGI-3-Agents/      # 官方框架 (submodule, make install 自动补丁)
 ├── custom_agents/
-│   ├── __init__.py        # Agent registration
-│   ├── action.py          # Main action learning agent
-│   └── view_utils.py      # Visualization utilities
-├── custom_agents.py       # Agent imports
-├── Makefile               # Build commands
-├── README.md              # This file
-├── requirements.txt       # Python dependencies
-└── utils.py               # Shared utilities
-```
-
-## Additional Usage Examples
-
-```bash
-# Standard competition run
-make action
-
-# Run with specific game ID
-uv run ARC-AGI-3-Agents/main.py --agent=action --game=vc33
-
-# View logs and metrics
-make tensorboard
-
-# Clean generated files
-make clean
+│   ├── __init__.py        # 包初始化
+│   ├── action.py          # 主 agent（CNN 模型 + 训练 + 采样）
+│   └── view_utils.py      # 可视化工具函数
+├── custom_agent.py        # Agent 导入入口
+├── viewer.py              # 实时可视化查看器
+├── utils.py               # 实验目录 / 日志工具
+├── Makefile               # 构建与运行命令
+├── requirements.txt       # Python 依赖
+└── README.md              # 本文件
 ```
 

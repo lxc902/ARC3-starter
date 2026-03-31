@@ -6,10 +6,13 @@ from datetime import datetime
 
 def get_git_info():
     """Return current git commit hash and uncommitted diff as strings"""
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
     try:
-        diff = subprocess.check_output(['git', 'diff']).decode()
-    except subprocess.CalledProcessError:
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        commit = 'not-a-git-repo'
+    try:
+        diff = subprocess.check_output(['git', 'diff'], stderr=subprocess.DEVNULL).decode()
+    except (subprocess.CalledProcessError, FileNotFoundError):
         diff = ''
     return commit, diff
 
